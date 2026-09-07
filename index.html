@@ -348,7 +348,7 @@
         function loadYouTubeForSong() {
             if (!currentSong) return;
             if (!ytReady) { loadYouTubeAPI(); return; }
-            const search = `${currentSong.title} ${currentSong.artist} audio`;
+            const search = `${currentSong.title} ${currentSong.artist} official audio`;
             ytRetryCount = 0;
             ytErrorShownFor = null;
             document.getElementById('ytHolder').innerHTML = '<div class="player-loading">Loading player...</div>';
@@ -367,6 +367,7 @@
                     events: {
                         'onReady': function (e) {
                             e.target.playVideo();
+                            startWatchdog();
                         },
                         'onStateChange': onPlayerStateChange,
                         'onError': onYoutubeError
@@ -374,7 +375,37 @@
                 });
             } else {
                 ytPlayer.loadPlaylist({ list: search, listType: 'search' });
+                startWatchdog();
             }
+        }
+
+        // Watchdog: if the player hasn't started playing within 5s,
+        // it's likely an unavailable video -> skip to the next result.
+        let watchdogTimer = null;
+        function startWatchdog() {
+            clearInterval(watchdogTimer);
+            watchdogTimer = setInterval(() => {
+                if (!ytPlayer || !currentSong) return;
+                const state = ytPlayer.getPlayerState ? ytPlayer.getPlayerState() : -99;
+                const loadedFrac = ytPlayer.getDuration ? (ytPlayer.getCurrentTime() / Math.max(ytPlayer.getDuration(), 1)) : 0;
+                // If video is playing, stop watchdog
+                if (state === 1) { clearInterval(watchdogTimer); watchdogTimer = null; return; }
+                // Unstarted, cued, or stalled for too long -> try next
+                if (state === -1 || state === 5 || (state === 3 && loadedFrac === 0)) {
+                    ytRetryCount++;
+                    if (ytRetryCount > 12) {
+                        clearInterval(watchdogTimer); watchdogTimer = null;
+                        showNoVideoMessage();
+                        return;
+                    }
+                    if (ytPlayer.getPlaylist && ytPlayer.getPlaylist().length > 0) {
+                        const nextIndex = (ytPlayer.getPlaylistIndex() + 1) % ytPlayer.getPlaylist().length;
+                        ytPlayer.playVideoAt(nextIndex);
+                    } else {
+                        ytPlayer.nextVideo ? ytPlayer.nextVideo() : null;
+                    }
+                }
+            }, 1500);
         }
 
         // Errors 100/101/150 = video unavailable. Auto-skip to next result.
@@ -433,6 +464,8 @@
             // When playing, reset retry counter
             if (event.data === 1) {
                 ytRetryCount = 0;
+                clearInterval(watchdogTimer);
+                watchdogTimer = null;
             }
         }
 
