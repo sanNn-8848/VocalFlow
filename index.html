@@ -184,17 +184,26 @@
                     <div class="yt-holder" id="ytHolder"></div>
                 </div>
                 <div class="player-hint">
-                    <div style="color:#f9c74f;font-weight:bold;margin-bottom:6px">▶ How to play this song:</div>
-                    <div style="margin-bottom:8px;font-size:0.82rem;line-height:1.5">
-                        1) Click <b style="color:#4ecdc4">Find on YouTube</b> below<br>
-                        2) Copy that link<br>
-                        3) Paste it here &amp; press Enter
+                    <div style="color:#f9c74f;font-weight:bold;margin-bottom:6px">▶ Play this song</div>
+                    <div id="autoRow" style="margin-bottom:8px;font-size:0.82rem">
+                        <button onclick="tryAutoPlay()" id="autoPlayBtn" style="padding:8px 14px;font-size:0.85rem;background:#e94560;width:100%">🎧 Try to play automatically</button>
+                    </div>
+                    <div style="margin-bottom:8px;font-size:0.82rem;line-height:1.5;color:#aaa">
+                        If auto-play finds nothing, use the manual way below:
                     </div>
                     <div style="margin-bottom:6px">
-                        <button onclick="openYTSearch()" style="padding:8px 14px;font-size:0.85rem;background:#0f3460">🔎 Find on YouTube</button>
+                        <button onclick="openYTSearch()" style="padding:8px 14px;font-size:0.85rem;background:#0f3460">🔎 Find an embeddable video on YouTube</button>
                     </div>
-                    <input type="text" id="customUrl" placeholder="Paste YouTube link here, press Enter" onkeydown="if(event.key==='Enter')useCustomUrl()">
+                    <input type="text" id="customUrl" placeholder="Paste that YouTube link here, press Enter" onkeydown="if(event.key==='Enter')useCustomUrl()">
                     <div id="urlStatus" style="font-size:0.78rem;color:#aaa;margin-top:6px"></div>
+                    <div style="margin-top:10px;border-top:1px solid #333;padding-top:8px;font-size:0.75rem;color:#777">
+                        ⚙️ Enable <b>full auto-play</b> (finds embeddable versions by itself): add a free YouTube API key
+                        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+                            <input type="password" id="apiKey" placeholder="YouTube Data API key" style="flex:1;min-width:140px;padding:8px;border:none;border-radius:6px;background:#0f3460;color:#fff;font-size:0.82rem">
+                            <button onclick="saveApiKey()" style="padding:8px 12px;font-size:0.82rem">Save</button>
+                        </div>
+                        <div style="margin-top:4px"><a href="https://developers.google.com/youtube/v3/getting-started" target="_blank" style="color:#4ecdc4">How to get a free API key (2 min)</a></div>
+                    </div>
                 </div>
             </div>
 
@@ -415,6 +424,55 @@
         function onPlayerStateChange(event) {
             if (event.data === 1) {
                 document.getElementById('urlStatus').textContent = '▶ Playing';
+            }
+        }
+
+        // ===== Auto-play: search for an embeddable YouTube video =====
+        function getApiKey() { return localStorage.getItem('vocalflow_yt_key') || ''; }
+
+        function saveApiKey() {
+            const key = document.getElementById('apiKey').value.trim();
+            if (!key) { alert('Paste your YouTube Data API key first.'); return; }
+            localStorage.setItem('vocalflow_yt_key', key);
+            document.getElementById('apiKey').value = '';
+            document.getElementById('urlStatus').textContent = '✅ API key saved. Now click "Try to play automatically".';
+        }
+
+        async function tryAutoPlay() {
+            if (!currentSong) return;
+            const status = document.getElementById('urlStatus');
+            const key = getApiKey();
+            if (!key) {
+                status.textContent = '⚠️ Add a free YouTube API key above to enable auto-play. Or use the paste-link method below.';
+                return;
+            }
+            status.textContent = '🔎 Searching for an embeddable video...';
+            const q = encodeURIComponent(currentSong.title + ' ' + currentSong.artist);
+            try {
+                // Search, filter for embeddable videos
+                const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${q}&type=video&videoEmbeddable=true&maxResults=10&key=${encodeURIComponent(key)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.error || !data.items || data.items.length === 0) {
+                    status.textContent = '❌ No embeddable video found. Try the paste-link method.';
+                    return;
+                }
+                // Pick the best candidate (prefer titles matching the song)
+                let picked = data.items[0];
+                for (const item of data.items) {
+                    const t = item.snippet.title.toLowerCase();
+                    if (t.includes(currentSong.title.toLowerCase())) { picked = item; break; }
+                }
+                if (!picked || !picked.id || !picked.id.videoId) {
+                    status.textContent = '❌ Could not load a video. Try paste-link.';
+                    return;
+                }
+                const vid = picked.id.videoId;
+                status.textContent = '✅ Playing "' + picked.snippet.title + '"';
+                createPlayer();
+                ytPlayer.loadVideoById(vid);
+            } catch (e) {
+                status.textContent = '❌ Auto-play failed. Try the paste-link method below.';
             }
         }
 
